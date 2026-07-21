@@ -38,4 +38,35 @@ class Settings:
     # Dossier des fiches benefits (sortie Agent 1)
     AIDES_JEUNES_BENEFITS_PATH = AIDES_JEUNES_DATA_PATH / "benefits" / "javascript"
 
+    # ── Agent 3 : Veille ──────────────────────────────────────────────
+    VEILLE_STATS_URL = os.getenv(
+        "VEILLE_STATS_URL",
+        "https://aides-jeunes-stats-recorder.osc-fr1.scalingo.io/benefits",
+    )
+    VEILLE_MATOMO_URL = os.getenv(
+        "VEILLE_MATOMO_URL",
+        "https://stats.beta.gouv.fr/index.php?module=API&format=JSON&idSite=63"
+        "&period=range&date=previous30&method=Events.getName&filter_limit=-1",
+    )
+    VEILLE_STATE_PATH = Path(os.getenv(
+        "VEILLE_STATE_PATH", str(BASE_DIR / ".veille" / "state.json")
+    ))
+    VEILLE_REPORTS_DIR = Path(os.getenv(
+        "VEILLE_REPORTS_DIR", str(BASE_DIR / "reports")
+    ))
+    VEILLE_DAILY_BATCH = int(os.getenv("VEILLE_DAILY_BATCH", "10"))
+    VEILLE_RECHECK_DAYS = int(os.getenv("VEILLE_RECHECK_DAYS", "30"))
+    VEILLE_CONCURRENCY = int(os.getenv("VEILLE_CONCURRENCY", "3"))
+    VEILLE_CONFIDENCE_MIN = float(os.getenv("VEILLE_CONFIDENCE_MIN", "0.8"))
+    VEILLE_PR_MODE = os.getenv("VEILLE_PR_MODE", "off")  # off | draft | ready
+    VEILLE_LINK_IGNORE_PATH = Path(os.getenv(
+        "VEILLE_LINK_IGNORE_PATH", str(BASE_DIR / "veille-link-ignore.yml")
+    ))
+    # Git/PR : remote du repo aides-jeunes à pousser (souvent un fork), repo cible
+    # de la PR et propriétaire de la branche head (pour PR cross-fork via gh).
+    VEILLE_GIT_REMOTE = os.getenv("VEILLE_GIT_REMOTE", "origin")
+    VEILLE_PR_REPO = os.getenv("VEILLE_PR_REPO", "")        # ex: betagouv/aides-jeunes
+    VEILLE_PR_HEAD = os.getenv("VEILLE_PR_HEAD", "")        # ex: aides-jeunes-bot
+    VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "10"))   # cap dur de PR par run
+
 settings = Settings()

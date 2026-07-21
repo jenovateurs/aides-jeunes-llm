@@ -193,6 +193,14 @@ JSON MALFORMÉ :
             except json.JSONDecodeError as exc:
                 raise ValueError(f"JSON non parseable après repair: {exc}") from exc
 
+    async def generate_json(self, messages: list[dict]) -> dict:
+        """Appel LLM générique renvoyant un dict JSON (nettoyage + repair).
+
+        Identique à generate_json_benefit mais nommé pour un usage non-benefit
+        (ex. content-check Agent 3).
+        """
+        return await self.generate_json_benefit(messages)
+
     async def generate_benefit_with_raw(self, messages: list[dict]) -> Tuple[Optional[dict], str, Optional[str]]:
         """Like generate_json_benefit but also returns the raw LLM text (debug).
 

@@ -7,6 +7,7 @@ from backend.routes.auth import router as auth_router
 from backend.routes.config import router as config_router
 from backend.routes.contribution import router as contribution_router
 from backend.routes.models import router as models_router
+from backend.routes.veille import router as veille_router
 
 # Phoenix tracing — opt-in. Set PHOENIX_TRACING=1 (collecteur OTLP requis sur :4317).
 if os.getenv("PHOENIX_TRACING") == "1":
@@ -30,6 +31,7 @@ app.include_router(config_router, prefix="/api", tags=["config"])
 app.include_router(auth_router, tags=["auth"])
 app.include_router(contribution_router, prefix="/api", tags=["contribution"])
 app.include_router(models_router, prefix="/api", tags=["models"])
+app.include_router(veille_router, prefix="/api", tags=["veille"])
 
 # Frontend : servi automatiquement si buildé (pnpm build → frontend/dist).
 frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")

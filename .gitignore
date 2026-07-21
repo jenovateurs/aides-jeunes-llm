@@ -66,3 +66,5 @@ Thumbs.db
 data/*.json
 !data/.gitkeep
 repro_fix.py
+.veille/
+reports/
