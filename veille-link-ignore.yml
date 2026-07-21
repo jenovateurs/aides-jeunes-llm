@@ -1,0 +1,12 @@
+# Faux négatifs de liens — édité à la main.
+# Ces domaines/URLs renvoient souvent 403/429 (protection anti-bot) alors que le
+# lien est valide. L'agent Veille ne les traite PAS comme cassés (pas de PR).
+#
+# Ajoute un domaine (couvre tous ses sous-domaines) ou une URL exacte.
+
+domains:
+  - ter.sncf.com
+  - sncf.com
+  - iledefrance-mobilites.fr
+
+urls: []
