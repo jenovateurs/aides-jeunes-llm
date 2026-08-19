@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional, TypedDict, Callable
 
 import yaml as pyyaml
-import httpx
 
 from configs.settings import settings
 from agent.services.llm import LLMService
@@ -14,6 +13,7 @@ from agent.services.pr import PRService
 from agent.tools.benefit_loader import load_dispositifs as _load_dispositifs
 from agent.tools.priority_stats import fetch_priority_map
 from agent.tools.veille_state import StateStore
+from agent.tools.http_client import HostThrottle, make_client
 from agent.tools.link_checker import check_dispositif_links, classify_status
 from agent.tools.link_ignore import load_link_ignore
 from agent.tools.content_check import fetch_page_text, check_content
@@ -135,12 +135,14 @@ class VeilleAgent:
         # 2. check_links
         link_results = []
         semaphore = asyncio.Semaphore(self.concurrency)
-        async with httpx.AsyncClient(verify=False) as client:
+        throttle = HostThrottle()
+        async with make_client() as client:
             for i, disp in enumerate(dispositifs):
                 if self._check_links:
                     res = await self._check_links(disp, client, semaphore)
                 else:
-                    res = await check_dispositif_links(disp, client, semaphore)
+                    res = await check_dispositif_links(
+                        disp, client, semaphore, throttle)
                 for l in res["links"]:
                     l["classe"] = ("ignored" if self.ignore.is_ignored(l["url"])
                                    else classify_status(l["status"]))
