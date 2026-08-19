@@ -123,13 +123,18 @@ UI sur `http://localhost:5173` (proxy `/api` → `:8000`).
 
 ## Agent 3 — Veille (CLI)
 
+Dossiers scannés : `data/benefits/javascript/` **et** `data/benefits/openfisca/`
+(490 fiches publiques, 803 liens), configurable via `VEILLE_BENEFITS_DIRS`. Le chemin
+de la PR suit le dossier d'origine de la fiche.
+
 Pipeline : `load_pending` → `check_links` → `check_content` → `apply_updates_and_pr` → rapport.
 Chaque run écrit un rapport Markdown dans `reports/veille-<timestamp>.md` et met à jour l'état
 dans `.veille/state.json` (évite de re-vérifier les mêmes fiches avant `VEILLE_RECHECK_DAYS`).
 
 ```bash
 cd tools/aj-llm
-uv run python -m agent.veille_cli [--limit N] [--only SLUG ...] [--model-name NAME] [--links-only]
+uv run python -m agent.veille_cli \
+  [--limit N] [--only SLUG ...] [--model-name NAME] [--links-only] [--covoiturage]
 ```
 
 | Option | Défaut | Effet |
@@ -138,6 +143,7 @@ uv run python -m agent.veille_cli [--limit N] [--only SLUG ...] [--model-name NA
 | `--only SLUG ...` | _(vide)_ | Restreint le run à ces slugs. Court-circuite la priorisation stats, l'état et `--limit`. |
 | `--model-name NAME` | _(config)_ | Force le modèle LLM (sinon `MODEL_NAME` du `.env`). |
 | `--links-only` | `false` | **Liens cassés uniquement** : saute l'analyse de contenu (montant / conditions), aucun appel LLM, aucune page téléchargée. Run rapide. |
+| `--covoiturage` | `false` | Ajoute les 111 incitations covoiturage (`dynamic/incitations-covoiturage.json`). Vérification des liens **seule** : ce sont des entrées JSON sans fiche YAML, donc jamais de PR. |
 
 ### Modes de PR
 
@@ -160,7 +166,11 @@ VEILLE_PR_MODE=draft VEILLE_DAILY_BATCH=150 \
 VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=betagouv/aides-jeunes VEILLE_PR_HEAD=aides-jeunes-bot \
 uv run python -m agent.veille_cli --limit 150 --links-only
 
-# 4. Veille complète (liens + contenu, appels LLM)
+# 4. Liens openfisca uniquement (aides nationales, service-public.fr)
+VEILLE_PR_MODE=off VEILLE_BENEFITS_DIRS=openfisca VEILLE_DAILY_BATCH=120 \
+uv run python -m agent.veille_cli --limit 120 --links-only
+
+# 5. Veille complète (liens + contenu, appels LLM)
 VEILLE_PR_MODE=draft VEILLE_DAILY_BATCH=50 \
 uv run python -m agent.veille_cli --limit 50
 ```
@@ -185,6 +195,8 @@ Un faux positif se corrige en ajoutant le domaine à `veille-link-ignore.yml` pl
 | `VEILLE_CONCURRENCY` | `3` | Requêtes HTTP en parallèle |
 | `VEILLE_CONFIDENCE_MIN` | `0.8` | Confiance LLM minimale pour une PR de contenu |
 | `VEILLE_GIT_REMOTE` | `origin` | Remote (fork) où pousser la branche |
+| `VEILLE_PR_BASE_REMOTE` | `origin` | Remote dont **part** la branche. Doit viser le repo cible : brancher depuis un fork en retard produit des PR qui annulent des correctifs déjà mergés. |
+| `VEILLE_BENEFITS_DIRS` | `javascript,openfisca` | Dossiers de `data/benefits/` scannés |
 | `VEILLE_PR_REPO` | _(vide)_ | Repo cible de la PR, ex. `betagouv/aides-jeunes` |
 | `VEILLE_PR_HEAD` | _(vide)_ | Owner de la branche head (PR cross-fork via `gh`) |
 | `VEILLE_STATE_PATH` | `.veille/state.json` | Fichier d'état |
