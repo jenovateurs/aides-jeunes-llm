@@ -399,6 +399,42 @@ def test_suspicious_403_no_pr_no_ignore(tmp_path):
     assert s["prs_opened"] == 1            # seulement dead.fr
 
 
+def test_links_only_skips_content_check(tmp_path):
+    # --links-only : aucun appel LLM, aucun fetch de page, aucune PR de contenu
+    def _boom(name):
+        raise AssertionError("LLM ne doit pas être instancié en mode links_only")
+
+    agent = _agent(tmp_path, "draft", pr=_FakePR())
+    agent._make_llm = _boom
+    state = asyncio.run(agent.run(
+        {"limit": 10, "only": [], "model_name": None, "links_only": True}))
+    assert state["summary"]["stale"] == 0
+    assert state["summary"]["prs_opened"] == 0
+    assert state["pr_results"] == []
+    assert all(c["skipped"] == "links_only" for c in state["content_results"])
+    data = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert data["benefits"]["a"]["content_status"] == "skipped"
+
+
+def test_links_only_still_opens_broken_link_pr(tmp_path):
+    pr = _FakePR()
+    agent = _agent_broken(tmp_path, "draft", pr, LinkIgnore(domains=["ter.sncf.com"]))
+    agent._make_llm = lambda name: (_ for _ in ()).throw(
+        AssertionError("LLM ne doit pas être instancié en mode links_only"))
+    state = asyncio.run(agent.run(
+        {"limit": 10, "only": [], "model_name": None, "links_only": True}))
+    assert state["summary"]["broken_links"] == 1
+    assert state["summary"]["prs_opened"] == 1
+    assert pr.created == [("a", True)]
+
+
+def test_parse_args_links_only():
+    from agent.veille_cli import parse_args
+
+    assert parse_args([])["links_only"] is False
+    assert parse_args(["--links-only"])["links_only"] is True
+
+
 # ── route ────────────────────────────────────────────────────────────────
 
 def test_route_streams_sse(monkeypatch):

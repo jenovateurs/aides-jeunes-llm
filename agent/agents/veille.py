@@ -25,6 +25,7 @@ class VeilleState(TypedDict, total=False):
     limit: int
     only: list
     model_name: Optional[str]
+    links_only: bool
     dispositifs: list
     link_results: list
     content_results: list
@@ -118,6 +119,7 @@ class VeilleAgent:
         limit = min(int(params.get("limit") or self.daily_batch), self.daily_batch)
         only = params.get("only") or []
         model_name = params.get("model_name")
+        links_only = bool(params.get("links_only"))
         today = self.today or _iso_today()
         timestamp = self.timestamp or _now_stamp()
 
@@ -153,28 +155,38 @@ class VeilleAgent:
                     "status": "ok" if all(l["classe"] == "ok" for l in res["links"]) else "issue",
                 })
 
-            # 3. check_content
+            # 3. check_content (sauté en mode links_only : aucun appel LLM)
             content_results = []
-            llm = self._make_llm(model_name)
-            for i, disp in enumerate(dispositifs):
-                url = disp["yaml"].get("link")
-                page_text = None
-                if url:
-                    page_text = (await self._fetch_page(url, client)
-                                 if self._fetch_page
-                                 else await fetch_page_text(url, client))
-                if not page_text:
+            if links_only:
+                for i, disp in enumerate(dispositifs):
                     content_results.append({"slug": disp["slug"], "stale": False,
                                             "confidence": 0.0, "divergences": [],
-                                            "proposed": {}, "skipped": "unreachable"})
-                else:
-                    content_results.append(
-                        await check_content(disp, page_text, llm, self.prompt))
-                await self._emit(emit, "progress", {
-                    "step": "check_content", "slug": disp["slug"],
-                    "index": i + 1, "total": total,
-                    "status": "stale" if content_results[-1].get("stale") else "ok",
-                })
+                                            "proposed": {}, "skipped": "links_only"})
+                    await self._emit(emit, "progress", {
+                        "step": "check_content", "slug": disp["slug"],
+                        "index": i + 1, "total": total, "status": "skipped",
+                    })
+            else:
+                llm = self._make_llm(model_name)
+                for i, disp in enumerate(dispositifs):
+                    url = disp["yaml"].get("link")
+                    page_text = None
+                    if url:
+                        page_text = (await self._fetch_page(url, client)
+                                     if self._fetch_page
+                                     else await fetch_page_text(url, client))
+                    if not page_text:
+                        content_results.append({"slug": disp["slug"], "stale": False,
+                                                "confidence": 0.0, "divergences": [],
+                                                "proposed": {}, "skipped": "unreachable"})
+                    else:
+                        content_results.append(
+                            await check_content(disp, page_text, llm, self.prompt))
+                    await self._emit(emit, "progress", {
+                        "step": "check_content", "slug": disp["slug"],
+                        "index": i + 1, "total": total,
+                        "status": "stale" if content_results[-1].get("stale") else "ok",
+                    })
 
         # 4. apply_updates_and_pr
         pr_results = await self._apply_updates(

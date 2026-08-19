@@ -11,8 +11,13 @@ def parse_args(argv) -> dict:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--model-name", dest="model_name", default=None)
+    parser.add_argument(
+        "--links-only", dest="links_only", action="store_true",
+        help="Ne vérifie que les liens (pas d'analyse de contenu, aucun appel LLM)",
+    )
     ns = parser.parse_args(argv)
-    return {"limit": ns.limit, "only": ns.only, "model_name": ns.model_name}
+    return {"limit": ns.limit, "only": ns.only, "model_name": ns.model_name,
+            "links_only": ns.links_only}
 
 
 async def main_async(params: dict) -> dict:

@@ -73,6 +73,6 @@ class Settings:
     VEILLE_GIT_REMOTE = os.getenv("VEILLE_GIT_REMOTE", "origin")
     VEILLE_PR_REPO = os.getenv("VEILLE_PR_REPO", "")        # ex: betagouv/aides-jeunes
     VEILLE_PR_HEAD = os.getenv("VEILLE_PR_HEAD", "")        # ex: aides-jeunes-bot
-    VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "10"))   # cap dur de PR par run
+    VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "20"))   # cap dur de PR par run
 
 settings = Settings()

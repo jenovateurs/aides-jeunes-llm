@@ -15,6 +15,7 @@ class VeilleRunRequest(BaseModel):
     limit: int = 10
     only: list[str] = []
     model_name: str | None = None
+    links_only: bool = False
 
 
 def _sse(event_type: str, payload: dict) -> str:

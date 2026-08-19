@@ -1,1 +1,0 @@
-VEILLE_PR_MODE=draft VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=betagouv/aides-jeunes VEILLE_PR_HEAD=aides-jeunes-bot VEILLE_DAILY_BATCH=150 VEILLE_MAX_PR=20  uv run python -m agent.veille_cli --limit 150
