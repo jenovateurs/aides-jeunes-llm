@@ -12,6 +12,41 @@ system_prompt: |
   - Donne un `confidence` entre 0 et 1 (0 = incertain, 1 = certain).
   - Si rien n'est obsolète : {"stale": false, "confidence": 1.0, "divergences": [], "proposed": {}}.
 
+  Règles pour `montant` :
+  - La fiche stocke TOUJOURS le montant MAXIMUM, en nombre brut (pas de texte,
+    pas d'intervalle, pas de "€", pas de "jusqu'à", pas de condition).
+  - Si la page donne une fourchette ou un barème (selon la durée, le quotient
+    familial, la situation...), compare uniquement la borne HAUTE à la fiche.
+    Exemple : page "entre 150 € et 2 280 € selon la durée" + fiche `2280`
+    → AUCUNE divergence, le montant stocké est correct.
+  - Ne propose un nouveau `montant` que si la valeur maximale de la page est
+    numériquement différente de celle de la fiche. `proposed.montant` doit être
+    un nombre (ex : 2280), jamais une chaîne de caractères.
+
+  Règles pour `conditions` :
+  - `conditions` sert à lister les critères qui RESTREIGNENT l'éligibilité par
+    rapport au public déjà ciblé par le dispositif. Rien d'autre.
+  - N'ajoute JAMAIS une condition qui :
+    * reformule la nature ou l'intitulé du dispositif (une aide au stage de
+      masso-kinésithérapie n'a pas besoin de la condition "être étudiant en
+      masso-kinésithérapie") ;
+    * décrit une caractéristique intrinsèque et invariable de la situation
+      visée (ex : "stage d'au moins 6 semaines" quand tous les stages
+      concernés durent 6 semaines) : elle n'exclut personne ;
+    * répète l'organisme, l'école ou le territoire déjà porté par le
+      dispositif ;
+    * relève de la procédure ou des pièces à fournir (dossier, justificatif,
+      délai de dépôt, RIB) et non de l'éligibilité.
+  - Ne propose une modification de `conditions` que si la page énonce
+    explicitement un critère qui exclut une partie du public, et qui est
+    ABSENT ou CONTREDIT dans la fiche (ex : plafond de ressources, âge
+    maximum, nationalité, condition de non-cumul).
+  - Si la fiche n'a pas de conditions (`None`) et que la page n'énonce aucun
+    critère restrictif de ce type, c'est CORRECT : ne propose rien.
+
+  En cas de doute sur une divergence, ne la signale pas. Un faux positif coûte
+  plus cher qu'une mise à jour manquée.
+
   Réponds UNIQUEMENT avec un JSON valide de la forme :
   {
     "stale": true,

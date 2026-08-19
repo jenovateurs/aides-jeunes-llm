@@ -62,6 +62,12 @@ class Settings:
     VEILLE_LINK_IGNORE_PATH = Path(os.getenv(
         "VEILLE_LINK_IGNORE_PATH", str(BASE_DIR / "veille-link-ignore.yml")
     ))
+    # HTTP : contre-mesures anti-bot (voir agent/tools/http_client.py).
+    VEILLE_USER_AGENT = os.getenv("VEILLE_USER_AGENT", "")  # vide = UA par défaut
+    VEILLE_HTTP_TIMEOUT_CONNECT = float(os.getenv("VEILLE_HTTP_TIMEOUT_CONNECT", "10"))
+    VEILLE_HTTP_TIMEOUT_READ = float(os.getenv("VEILLE_HTTP_TIMEOUT_READ", "30"))
+    VEILLE_HTTP_RETRIES = int(os.getenv("VEILLE_HTTP_RETRIES", "3"))
+    VEILLE_HTTP_HOST_DELAY = float(os.getenv("VEILLE_HTTP_HOST_DELAY", "1.5"))
     # Git/PR : remote du repo aides-jeunes à pousser (souvent un fork), repo cible
     # de la PR et propriétaire de la branche head (pour PR cross-fork via gh).
     VEILLE_GIT_REMOTE = os.getenv("VEILLE_GIT_REMOTE", "origin")

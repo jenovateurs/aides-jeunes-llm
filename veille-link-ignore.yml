@@ -5,8 +5,6 @@
 # Ajoute un domaine (couvre tous ses sous-domaines) ou une URL exacte.
 
 domains:
-  - ter.sncf.com
-  - sncf.com
   - iledefrance-mobilites.fr
-
+  - lamayenne.fr
 urls: []
