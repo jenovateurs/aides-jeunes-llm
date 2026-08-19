@@ -15,9 +15,14 @@ def parse_args(argv) -> dict:
         "--links-only", dest="links_only", action="store_true",
         help="Ne vérifie que les liens (pas d'analyse de contenu, aucun appel LLM)",
     )
+    parser.add_argument(
+        "--covoiturage", action="store_true",
+        help="Inclut les incitations covoiturage (JSON dynamic/) — vérification "
+             "des liens seule, jamais de PR",
+    )
     ns = parser.parse_args(argv)
     return {"limit": ns.limit, "only": ns.only, "model_name": ns.model_name,
-            "links_only": ns.links_only}
+            "links_only": ns.links_only, "covoiturage": ns.covoiturage}
 
 
 async def main_async(params: dict) -> dict:

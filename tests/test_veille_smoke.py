@@ -8,7 +8,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from agent.tools.benefit_loader import extract_links, load_dispositifs
+from agent.tools.benefit_loader import (
+    extract_links, load_covoiturage, load_dispositifs)
 from agent.tools.veille_state import StateStore
 from agent.tools.link_checker import check_link
 from agent.tools.yaml_updater import patch_benefit_file
@@ -36,6 +37,19 @@ def test_load_dispositifs_public_only(tmp_path):
     (tmp_path / "priv.yml").write_text("label: X\nprivate: true\n", encoding="utf-8")
     out = load_dispositifs(tmp_path)
     assert [d["slug"] for d in out] == ["pub"]
+
+
+def test_load_dispositifs_multi_dirs(tmp_path):
+    js, of = tmp_path / "javascript", tmp_path / "openfisca"
+    js.mkdir(); of.mkdir()
+    (js / "a.yml").write_text("label: A\nlink: https://a.fr\n", encoding="utf-8")
+    (of / "aah.yml").write_text("label: AAH\nlink: https://b.fr\n", encoding="utf-8")
+    (of / "priv.yml").write_text("label: X\nprivate: true\n", encoding="utf-8")
+    out = load_dispositifs([js, of])
+    assert sorted(d["slug"] for d in out) == ["a", "aah"]
+    by_slug = {d["slug"]: d for d in out}
+    assert by_slug["aah"]["dir"] == "openfisca"
+    assert by_slug["aah"]["path"] == of / "aah.yml"
 
 
 def test_state_select_and_mark(tmp_path):
@@ -426,6 +440,129 @@ def test_links_only_still_opens_broken_link_pr(tmp_path):
     assert state["summary"]["broken_links"] == 1
     assert state["summary"]["prs_opened"] == 1
     assert pr.created == [("a", True)]
+
+
+def test_pr_path_follows_openfisca_dir(tmp_path):
+    # une fiche openfisca cassée doit être patchée dans openfisca/, pas javascript/
+    of = tmp_path / "benefits" / "openfisca"
+    of.mkdir(parents=True)
+    (of / "aah.yml").write_text(
+        "label: AAH\ninstitution: caf\ndescription: d\nlink: https://dead.fr/x\n",
+        encoding="utf-8")
+    disp = [{"slug": "aah", "label": "AAH", "institution": "caf",
+             "path": of / "aah.yml", "dir": "openfisca",
+             "links": [{"url": "https://dead.fr/x", "type": "link"}],
+             "yaml": {"description": "d", "link": "https://dead.fr/x"}}]
+
+    async def fake_links(dsp, client, sem):
+        return {"slug": dsp["slug"], "links": [
+            {"url": l["url"], "type": l["type"], "status": 404, "ok": False}
+            for l in dsp["links"]]}
+
+    class _CapturePR(_FakePR):
+        def __init__(self):
+            super().__init__()
+            self.rels = []
+        def create(self, slug, file_rel_path, title, body, draft, today):
+            self.rels.append(file_rel_path)
+            return super().create(slug, file_rel_path, title, body, draft, today)
+
+    pr = _CapturePR()
+    agent = VeilleAgent(
+        load_dispositifs=lambda dirs: disp,
+        fetch_priority=lambda: {"aah": 1.0},
+        check_links=fake_links,
+        make_llm=lambda name: _FakeLLM(),
+        pr_service=pr,
+        benefits_dirs=[tmp_path / "benefits" / "javascript", of],
+        state_path=tmp_path / "state.json",
+        reports_dir=tmp_path / "reports",
+        pr_mode="draft", confidence_min=0.8,
+        link_ignore=LinkIgnore(),
+        today="2026-08-19", timestamp="20260819-1200",
+    )
+    state = asyncio.run(agent.run(
+        {"limit": 10, "only": [], "model_name": None, "links_only": True}))
+    assert state["summary"]["prs_opened"] == 1
+    assert pr.rels == ["data/benefits/openfisca/aah.yml"]
+    assert "private: true" in (of / "aah.yml").read_text(encoding="utf-8")
+
+
+def test_load_covoiturage_marks_check_only(tmp_path):
+    path = tmp_path / "incitations-covoiturage.json"
+    path.write_text(json.dumps([
+        {"link": "https://a.fr/covoit", "code_siren": "123", "operateurs": "BlablaCarDaily"},
+        {"link": "", "code_siren": "456"},          # sans lien → ignoré
+        {"code_siren": "789"},                       # sans lien → ignoré
+    ]), encoding="utf-8")
+    out = load_covoiturage(path)
+    assert [d["slug"] for d in out] == ["covoiturage-123"]
+    d = out[0]
+    assert d["check_only"] is True
+    assert d["dir"] == "dynamic"
+    assert d["links"] == [{"url": "https://a.fr/covoit", "type": "link"}]
+
+
+def test_load_covoiturage_missing_file(tmp_path):
+    assert load_covoiturage(tmp_path / "absent.json") == []
+
+
+def test_covoiturage_broken_link_never_opens_pr(tmp_path):
+    # lien covoiturage cassé : signalé au rapport, jamais de PR (pas de fiche YAML)
+    covoit = [{"slug": "covoiturage-123", "label": "Incitation covoiturage 123",
+               "institution": "", "dir": "dynamic", "check_only": True,
+               "links": [{"url": "https://dead.fr/covoit", "type": "link"}],
+               "yaml": {"link": "https://dead.fr/covoit"}}]
+
+    async def fake_links(dsp, client, sem):
+        return {"slug": dsp["slug"], "links": [
+            {"url": l["url"], "type": l["type"], "status": 404, "ok": False}
+            for l in dsp["links"]]}
+
+    pr = _FakePR()
+    agent = VeilleAgent(
+        load_dispositifs=lambda dirs: [],
+        load_covoiturage=lambda path: covoit,
+        fetch_priority=lambda: {},
+        check_links=fake_links,
+        make_llm=lambda name: _FakeLLM(),
+        pr_service=pr,
+        benefits_dirs=[tmp_path / "benefits"],
+        state_path=tmp_path / "state.json",
+        reports_dir=tmp_path / "reports",
+        pr_mode="draft", confidence_min=0.8,
+        link_ignore=LinkIgnore(),
+        today="2026-08-19", timestamp="20260819-1200",
+    )
+    state = asyncio.run(agent.run(
+        {"limit": 10, "only": [], "model_name": None, "covoiturage": True}))
+    assert state["summary"]["broken_links"] == 1
+    assert state["summary"]["prs_opened"] == 0
+    assert pr.created == []
+    assert state["pr_results"][0]["action"] == "broken_no_pr"
+    assert state["content_results"][0]["skipped"] == "check_only"
+
+
+def test_covoiturage_off_by_default(tmp_path):
+    agent = VeilleAgent(
+        load_dispositifs=lambda dirs: [],
+        load_covoiturage=lambda path: (_ for _ in ()).throw(
+            AssertionError("covoiturage ne doit pas être chargé sans le flag")),
+        fetch_priority=lambda: {},
+        benefits_dirs=[tmp_path / "benefits"],
+        state_path=tmp_path / "state.json",
+        reports_dir=tmp_path / "reports",
+        pr_mode="off", today="2026-08-19", timestamp="20260819-1200",
+    )
+    state = asyncio.run(agent.run({"limit": 10, "links_only": True}))
+    assert state["summary"]["checked"] == 0
+
+
+def test_parse_args_covoiturage():
+    from agent.veille_cli import parse_args
+
+    assert parse_args([])["covoiturage"] is False
+    assert parse_args(["--covoiturage"])["covoiturage"] is True
 
 
 def test_parse_args_links_only():

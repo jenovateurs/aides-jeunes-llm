@@ -11,6 +11,7 @@ from agent.services.llm import LLMService
 from agent.services.report import build_summary, render_markdown, write_report
 from agent.services.pr import PRService
 from agent.tools.benefit_loader import load_dispositifs as _load_dispositifs
+from agent.tools.benefit_loader import load_covoiturage as _load_covoiturage
 from agent.tools.priority_stats import fetch_priority_map
 from agent.tools.veille_state import StateStore
 from agent.tools.http_client import HostThrottle, make_client
@@ -26,6 +27,7 @@ class VeilleState(TypedDict, total=False):
     only: list
     model_name: Optional[str]
     links_only: bool
+    covoiturage: bool
     dispositifs: list
     link_results: list
     content_results: list
@@ -48,12 +50,15 @@ class VeilleAgent:
     def __init__(
         self,
         load_dispositifs: Callable = _load_dispositifs,
+        load_covoiturage: Callable = _load_covoiturage,
         fetch_priority: Callable = None,
         check_links: Callable = None,
         fetch_page: Callable = None,
         make_llm: Callable = None,
         pr_service: PRService = None,
         benefits_dir: Path = None,
+        benefits_dirs: list = None,
+        covoiturage_path: Path = None,
         state_path: Path = None,
         reports_dir: Path = None,
         stats_url: str = None,
@@ -68,7 +73,12 @@ class VeilleAgent:
         link_ignore=None,
         link_ignore_path: Path = None,
     ):
-        self.benefits_dir = Path(benefits_dir or settings.AIDES_JEUNES_BENEFITS_PATH)
+        # benefits_dir (dossier unique) reste accepté ; benefits_dirs permet de
+        # scanner plusieurs dossiers (javascript/ + openfisca/).
+        self.benefits_dirs = [Path(d) for d in (
+            benefits_dirs or ([benefits_dir] if benefits_dir
+                              else settings.VEILLE_BENEFITS_DIRS))]
+        self.benefits_dir = self.benefits_dirs[0]
         self.state_path = Path(state_path or settings.VEILLE_STATE_PATH)
         self.reports_dir = Path(reports_dir or settings.VEILLE_REPORTS_DIR)
         self.stats_url = stats_url or settings.VEILLE_STATS_URL
@@ -83,6 +93,9 @@ class VeilleAgent:
         self.pr_service = pr_service
 
         self._load_dispositifs = load_dispositifs
+        self._load_covoiturage = load_covoiturage
+        self.covoiturage_path = Path(
+            covoiturage_path or settings.AIDES_JEUNES_COVOITURAGE_PATH)
         self._fetch_priority = fetch_priority or (
             lambda: fetch_priority_map(self.stats_url, self.matomo_url)
         )
@@ -100,6 +113,7 @@ class VeilleAgent:
         return self.pr_service or PRService(
             settings.AIDES_JEUNES_ROOT,
             remote=settings.VEILLE_GIT_REMOTE,
+            base_remote=settings.VEILLE_PR_BASE_REMOTE,
             base_repo=settings.VEILLE_PR_REPO,
             head_owner=settings.VEILLE_PR_HEAD,
         )
@@ -120,11 +134,14 @@ class VeilleAgent:
         only = params.get("only") or []
         model_name = params.get("model_name")
         links_only = bool(params.get("links_only"))
+        covoiturage = bool(params.get("covoiturage"))
         today = self.today or _iso_today()
         timestamp = self.timestamp or _now_stamp()
 
         # 1. load_pending
-        all_disp = self._load_dispositifs(self.benefits_dir)
+        all_disp = self._load_dispositifs(self.benefits_dirs)
+        if covoiturage:
+            all_disp = all_disp + self._load_covoiturage(self.covoiturage_path)
         priority = await _maybe_await(self._fetch_priority())
         store = StateStore(self.state_path, today=today)
         dispositifs = store.select_pending(
@@ -169,6 +186,12 @@ class VeilleAgent:
             else:
                 llm = self._make_llm(model_name)
                 for i, disp in enumerate(dispositifs):
+                    if disp.get("check_only"):
+                        # covoiturage : entrée JSON, pas de fiche à comparer.
+                        content_results.append({"slug": disp["slug"], "stale": False,
+                                                "confidence": 0.0, "divergences": [],
+                                                "proposed": {}, "skipped": "check_only"})
+                        continue
                     url = disp["yaml"].get("link")
                     page_text = None
                     if url:
@@ -230,7 +253,8 @@ class VeilleAgent:
             if not broken:
                 continue
             handled.add(slug)
-            if self.pr_mode == "off":
+            if self.pr_mode == "off" or by_slug[slug].get("check_only"):
+                # check_only (covoiturage) : pas de fiche YAML à patcher → rapport seul.
                 results.append({"slug": slug, "action": "broken_no_pr",
                                 "broken": [l["url"] for l in broken]})
             elif _capped():
@@ -250,7 +274,7 @@ class VeilleAgent:
             if not (c.get("stale") and c.get("proposed")
                     and c.get("confidence", 0.0) >= self.confidence_min):
                 continue
-            if self.pr_mode == "off":
+            if self.pr_mode == "off" or by_slug[slug].get("check_only"):
                 results.append({"slug": slug, "action": "proposed_no_pr"})
             elif _capped():
                 results.append({"slug": slug, "action": "pr_capped"})
@@ -262,15 +286,29 @@ class VeilleAgent:
             await self._emit(emit, "pr", results[-1])
         return results
 
+    def _file_and_rel(self, disp) -> tuple:
+        """Fichier source de la fiche + son chemin relatif au repo aides-jeunes.
+
+        `path`/`dir` viennent du loader ; fallback sur le premier dossier scanné
+        pour les dispositifs injectés (tests) qui ne les portent pas.
+        """
+        file_path = Path(disp.get("path") or (self.benefits_dir / f"{disp['slug']}.yml"))
+        try:
+            rel = str(file_path.resolve().relative_to(
+                Path(settings.AIDES_JEUNES_ROOT).resolve()))
+        except ValueError:
+            folder = disp.get("dir") or self.benefits_dir.name
+            rel = f"data/benefits/{folder}/{disp['slug']}.yml"
+        return file_path, rel
+
     async def _open_broken_pr(self, disp, broken, today) -> dict:
         slug = disp["slug"]
         pr = self._get_pr()
-        file_path = self.benefits_dir / f"{slug}.yml"
+        file_path, rel = self._file_and_rel(disp)
         try:
             if pr.branch_exists(slug):
                 return {"slug": slug, "action": "pr_exists"}
             diff = mark_private(file_path)
-            rel = f"data/benefits/javascript/{slug}.yml"
             title = f"veille: {disp.get('label', slug)} — lien(s) cassé(s), passage en private"
             body = _pr_body_broken(disp, broken, diff)
             url = pr.create(slug, rel, title, body,
@@ -283,7 +321,7 @@ class VeilleAgent:
     async def _open_pr(self, disp, content, today) -> dict:
         slug = disp["slug"]
         pr = self._get_pr()
-        file_path = self.benefits_dir / f"{slug}.yml"
+        file_path, rel = self._file_and_rel(disp)
         try:
             if pr.branch_exists(slug):
                 return {"slug": slug, "action": "pr_exists"}
@@ -299,7 +337,6 @@ class VeilleAgent:
                 errors = []  # validation best-effort, non bloquante
             if errors:
                 return {"slug": slug, "action": "invalid_patch", "error": str(errors)}
-            rel = f"data/benefits/javascript/{slug}.yml"
             champs = ", ".join(content["proposed"].keys())
             title = f"veille: mise à jour {disp.get('label', slug)} ({champs})"
             body = _pr_body(disp, content, diff)

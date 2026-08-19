@@ -37,6 +37,21 @@ class Settings:
     ))
     # Dossier des fiches benefits (sortie Agent 1)
     AIDES_JEUNES_BENEFITS_PATH = AIDES_JEUNES_DATA_PATH / "benefits" / "javascript"
+    # Dossiers scannés par l'Agent 3 (veille) : les fiches openfisca ont la même
+    # forme YAML que les javascript, seul le dossier change.
+    # (boucle et non compréhension : le corps d'une compréhension ne voit pas
+    # les attributs de classe en cours de définition)
+    VEILLE_BENEFITS_DIRS = []
+    for _name in os.getenv("VEILLE_BENEFITS_DIRS", "javascript,openfisca").split(","):
+        if _name.strip():
+            VEILLE_BENEFITS_DIRS.append(
+                AIDES_JEUNES_DATA_PATH / "benefits" / _name.strip())
+    del _name
+
+    # Incitations covoiturage : tableau JSON (pas des fiches YAML) — vérifiées
+    # en lecture seule par l'Agent 3 via --covoiturage.
+    AIDES_JEUNES_COVOITURAGE_PATH = (
+        AIDES_JEUNES_DATA_PATH / "benefits" / "dynamic" / "incitations-covoiturage.json")
 
     # ── Agent 3 : Veille ──────────────────────────────────────────────
     VEILLE_STATS_URL = os.getenv(
@@ -71,6 +86,9 @@ class Settings:
     # Git/PR : remote du repo aides-jeunes à pousser (souvent un fork), repo cible
     # de la PR et propriétaire de la branche head (pour PR cross-fork via gh).
     VEILLE_GIT_REMOTE = os.getenv("VEILLE_GIT_REMOTE", "origin")
+    # Remote dont partent les branches : doit pointer le repo cible de la PR,
+    # sinon les PR sont bâties sur un fork obsolète (correctifs upstream annulés).
+    VEILLE_PR_BASE_REMOTE = os.getenv("VEILLE_PR_BASE_REMOTE", "origin")
     VEILLE_PR_REPO = os.getenv("VEILLE_PR_REPO", "")        # ex: betagouv/aides-jeunes
     VEILLE_PR_HEAD = os.getenv("VEILLE_PR_HEAD", "")        # ex: aides-jeunes-bot
     VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "20"))   # cap dur de PR par run

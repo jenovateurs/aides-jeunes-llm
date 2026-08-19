@@ -16,6 +16,7 @@ class VeilleRunRequest(BaseModel):
     only: list[str] = []
     model_name: str | None = None
     links_only: bool = False
+    covoiturage: bool = False
 
 
 def _sse(event_type: str, payload: dict) -> str:
