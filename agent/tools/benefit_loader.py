@@ -20,13 +20,17 @@ def extract_links(benefit: dict) -> list[dict]:
     return [{"url": url, "type": " / ".join(types)} for url, types in by_url.items()]
 
 
-def load_dispositifs(benefits_dir) -> list[dict]:
-    """Charge les dispositifs publics depuis un ou plusieurs dossiers de *.yml.
+def load_dispositifs(benefits_dir, only_private: bool = False) -> list[dict]:
+    """Charge les dispositifs depuis un ou plusieurs dossiers de *.yml.
 
     `benefits_dir` accepte un chemin unique ou une liste (ex. `javascript/` +
-    `openfisca/`). slug = nom de fichier (sans extension) ; les fiches `private`
-    sont ignorées. Chaque dispositif porte son `path` (fichier source) et `dir`
-    (nom du dossier), nécessaires pour patcher le bon fichier lors d'une PR.
+    `openfisca/`). slug = nom de fichier (sans extension). Chaque dispositif
+    porte son `path` (fichier source) et `dir` (nom du dossier), nécessaires
+    pour patcher le bon fichier lors d'une PR.
+
+    Par défaut seules les fiches publiques sont retournées. `only_private`
+    inverse le filtre : c'est le mode revival, qui reteste les fiches déjà
+    passées en `private` pour voir si leurs liens revivent.
     """
     dirs = ([benefits_dir] if isinstance(benefits_dir, (str, Path))
             else list(benefits_dir))
@@ -37,7 +41,9 @@ def load_dispositifs(benefits_dir) -> list[dict]:
                 data = yaml.safe_load(fh)
         except Exception:
             continue
-        if not isinstance(data, dict) or data.get("private"):
+        if not isinstance(data, dict):
+            continue
+        if bool(data.get("private")) is not only_private:
             continue
         dispositifs.append({
             "slug": path.stem,

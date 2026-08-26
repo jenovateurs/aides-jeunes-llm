@@ -93,4 +93,22 @@ class Settings:
     VEILLE_PR_HEAD = os.getenv("VEILLE_PR_HEAD", "")        # ex: aides-jeunes-bot
     VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "20"))   # cap dur de PR par run
 
+    # ── Mode revival : fiches `private` dont les liens revivent ────────
+    # State séparé : écrire dans VEILLE_STATE_PATH écraserait le `last_run` des
+    # slugs et perturberait la rotation de la veille normale.
+    VEILLE_REVIVAL_STATE_PATH = Path(os.getenv(
+        "VEILLE_REVIVAL_STATE_PATH", str(BASE_DIR / ".veille" / "revival-state.json")
+    ))
+    # Cap propre au revival : VEILLE_DAILY_BATCH (10) ramènerait silencieusement
+    # un `--limit 67` à 10.
+    VEILLE_REVIVAL_BATCH = int(os.getenv("VEILLE_REVIVAL_BATCH", "30"))
+    # Fiches à ne JAMAIS réactiver, quel que soit l'état de leurs liens.
+    # `benefit_front_test` est une fixture des tests du front : la publier
+    # injecterait une fausse aide en production.
+    VEILLE_REVIVAL_EXCLUDE = frozenset(
+        slug.strip() for slug in
+        os.getenv("VEILLE_REVIVAL_EXCLUDE", "benefit_front_test").split(",")
+        if slug.strip()
+    )
+
 settings = Settings()

@@ -137,8 +137,9 @@ def test_fallback_to_git_when_gh_unavailable():
     runner = _NoGh()
     pr = _pr(runner, remote="aides-jeunes-bot", base_repo="betagouv/aides-jeunes")
     assert pr.branch_exists("a") is True
+    # repli large : les deux préfixes (update/revive) sont couverts
     assert runner.cmd("git", "ls-remote") == [
-        "git", "ls-remote", "--heads", "aides-jeunes-bot", "veille/update-a*"]
+        "git", "ls-remote", "--heads", "aides-jeunes-bot", "veille/*-a-*"]
 
 
 def test_failed_command_raises():
@@ -154,3 +155,21 @@ def test_failed_command_raises():
         assert "boom" in str(exc)
     else:
         raise AssertionError("RuntimeError attendue")
+
+
+def test_revive_prefix_names_the_branch():
+    # mode revival : branche veille/revive-<slug>-<date>
+    runner = _Runner(stdout="https://github.com/betagouv/aides-jeunes/pull/2")
+    _pr(runner, remote="origin").create(
+        "a", "f.yml", "t", "b", draft=False, today="20260826", prefix="revive")
+    assert runner.cmd("git", "checkout") == [
+        "git", "checkout", "-b", "veille/revive-a-20260826", "origin/main"]
+    assert runner.cmd("git", "push") == [
+        "git", "push", "-u", "origin", "veille/revive-a-20260826"]
+
+
+def test_revive_pr_blocks_a_new_pr_for_the_same_slug():
+    # une PR de réactivation refusée ne doit pas être rejouée
+    runner = _PRListRunner([
+        {"headRefName": "veille/revive-a-20260826", "state": "CLOSED"}])
+    assert _pr(runner, base_repo="betagouv/aides-jeunes").branch_exists("a") is True

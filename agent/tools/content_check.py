@@ -44,17 +44,23 @@ def coerce_montant(value):
     return None
 
 
-def filter_divergences(result: dict) -> dict:
+def filter_divergences(result: dict, allowed=None) -> dict:
     """Anti-hallucination : ignore les divergences sans extrait_source.
 
     Écarte aussi les propositions de `montant` non numériques (fourchettes,
     barèmes rédigés) que le prompt interdit mais que le LLM produit parfois.
+
+    `allowed` restreint les champs retenus (ex. `("montant",)` en mode revival,
+    où seul le montant maximum est jugé fiable) ; None = tous les champs.
     """
     kept = [
         d for d in result.get("divergences", [])
         if (d.get("extrait_source") or "").strip()
     ]
     proposed = result.get("proposed", {}) or {}
+    if allowed is not None:
+        kept = [d for d in kept if d.get("champ") in allowed]
+        proposed = {k: v for k, v in proposed.items() if k in allowed}
     if "montant" in proposed:
         montant = coerce_montant(proposed["montant"])
         if montant is None:
@@ -70,8 +76,11 @@ def filter_divergences(result: dict) -> dict:
     return result
 
 
-async def check_content(dispositif, page_text, llm, prompt) -> dict:
-    """Compare la fiche à la page via LLM ; renvoie un résultat filtré."""
+async def check_content(dispositif, page_text, llm, prompt, allowed=None) -> dict:
+    """Compare la fiche à la page via LLM ; renvoie un résultat filtré.
+
+    `allowed` limite les champs exploités (voir `filter_divergences`).
+    """
     y = dispositif["yaml"]
     user = prompt["user_template"].format(
         label=dispositif.get("label", dispositif["slug"]),
@@ -96,4 +105,4 @@ async def check_content(dispositif, page_text, llm, prompt) -> dict:
         "divergences": raw.get("divergences", []),
         "proposed": raw.get("proposed", {}) or {},
     }
-    return filter_divergences(result)
+    return filter_divergences(result, allowed=allowed)

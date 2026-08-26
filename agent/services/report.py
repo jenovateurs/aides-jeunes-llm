@@ -16,7 +16,8 @@ def build_summary(link_results, content_results, pr_results) -> dict:
     proposals_no_pr = sum(
         1 for p in pr_results
         if p.get("action") in ("proposed_no_pr", "broken_no_pr", "pr_error",
-                                "invalid_patch", "pr_exists", "pr_capped")
+                                "invalid_patch", "pr_exists", "pr_capped",
+                                "revive_no_pr", "still_broken", "no_link")
     )
     return {
         "checked": len(link_results),
@@ -29,15 +30,22 @@ def build_summary(link_results, content_results, pr_results) -> dict:
     }
 
 
-def render_markdown(link_results, content_results, pr_results, summary, generated_at) -> str:
-    lines = [f"# Rapport de veille — {generated_at}", ""]
+def render_markdown(link_results, content_results, pr_results, summary,
+                    generated_at, mode="veille") -> str:
+    """Rapport Markdown. `mode='revival'` = sens inverse (sortie du private)."""
+    revival = mode == "revival"
+    titre = ("Rapport de réactivation (fiches private)" if revival
+             else "Rapport de veille")
+    lines = [f"# {titre} — {generated_at}", ""]
     lines.append(
         f"- Dispositifs vérifiés : {summary['checked']}\n"
-        f"- Liens cassés (→ private) : {summary['broken_links']}\n"
+        f"- Liens cassés ({'toujours morts' if revival else '→ private'}) : "
+        f"{summary['broken_links']}\n"
         f"- Liens suspects (vérif humaine) : {summary.get('suspicious_links', 0)}\n"
         f"- Liens ignorés (faux positifs connus) : {summary.get('ignored_links', 0)}\n"
         f"- Contenus divergents : {summary['stale']}\n"
-        f"- PRs ouvertes : {summary['prs_opened']}\n"
+        f"- PRs ouvertes ({'réactivation' if revival else 'mise à jour'}) : "
+        f"{summary['prs_opened']}\n"
         f"- Propositions sans PR : {summary['proposals_no_pr']}"
     )
 
@@ -53,7 +61,9 @@ def render_markdown(link_results, content_results, pr_results, summary, generate
             out.append(empty_msg)
         return out
 
-    lines += _section("## Liens cassés (passage en private)", "broken", "_Aucun._")
+    lines += _section(
+        "## Liens toujours cassés (fiche laissée en private)" if revival
+        else "## Liens cassés (passage en private)", "broken", "_Aucun._")
     lines += _section(
         "## Liens suspects (protection anti-bot ? — faux négatif possible, vérif humaine)",
         "suspicious",
@@ -61,7 +71,7 @@ def render_markdown(link_results, content_results, pr_results, summary, generate
     )
     lines += _section("## Liens ignorés (faux positifs connus)", "ignored", "_Aucun._")
 
-    lines += ["", "## Contenus divergents", ""]
+    lines += ["", "## Montants divergents" if revival else "## Contenus divergents", ""]
     stale_any = False
     for c in content_results:
         if not c.get("stale"):
@@ -76,7 +86,7 @@ def render_markdown(link_results, content_results, pr_results, summary, generate
     if not stale_any:
         lines.append("_Aucun._")
 
-    lines += ["", "## PRs & propositions", ""]
+    lines += ["", "## PRs de réactivation" if revival else "## PRs & propositions", ""]
     if pr_results:
         for p in pr_results:
             detail = p.get("pr_url") or p.get("error") or ""
@@ -87,9 +97,11 @@ def render_markdown(link_results, content_results, pr_results, summary, generate
     return "\n".join(lines) + "\n"
 
 
-def write_report(markdown: str, reports_dir: Path, timestamp: str) -> Path:
+def write_report(markdown: str, reports_dir: Path, timestamp: str,
+                 prefix: str = "veille") -> Path:
+    """Écrit le rapport. `prefix` sépare les rapports veille et revival."""
     reports_dir = Path(reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"veille-{timestamp}.md"
+    path = reports_dir / f"{prefix}-{timestamp}.md"
     path.write_text(markdown, encoding="utf-8")
     return path

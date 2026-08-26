@@ -1,6 +1,7 @@
 """Agent 3 — Veille : pipeline load_pending → check_links → check_content →
 apply_updates_and_pr → generate_report. Orchestré pour le streaming SSE."""
 import asyncio
+import json
 from pathlib import Path
 from typing import Optional, TypedDict, Callable
 
@@ -18,7 +19,8 @@ from agent.tools.http_client import HostThrottle, make_client
 from agent.tools.link_checker import check_dispositif_links, classify_status
 from agent.tools.link_ignore import load_link_ignore
 from agent.tools.content_check import fetch_page_text, check_content
-from agent.tools.yaml_updater import patch_benefit_file, mark_private
+from agent.tools.yaml_updater import (
+    patch_benefit_file, mark_private, unmark_private)
 from agent.tools.yaml_validator import validate_benefit
 
 
@@ -28,6 +30,8 @@ class VeilleState(TypedDict, total=False):
     model_name: Optional[str]
     links_only: bool
     covoiturage: bool
+    revival: bool
+    all_private: bool
     dispositifs: list
     link_results: list
     content_results: list
@@ -38,8 +42,8 @@ class VeilleState(TypedDict, total=False):
     error: Optional[str]
 
 
-def _load_prompt() -> dict:
-    path = Path(__file__).parent.parent / "prompts" / "veille.yaml"
+def _load_prompt(name: str = "veille") -> dict:
+    path = Path(__file__).parent.parent / "prompts" / f"{name}.yaml"
     with open(path, encoding="utf-8") as fh:
         return pyyaml.safe_load(fh)
 
@@ -60,6 +64,7 @@ class VeilleAgent:
         benefits_dirs: list = None,
         covoiturage_path: Path = None,
         state_path: Path = None,
+        revival_state_path: Path = None,
         reports_dir: Path = None,
         stats_url: str = None,
         matomo_url: str = None,
@@ -80,6 +85,10 @@ class VeilleAgent:
                               else settings.VEILLE_BENEFITS_DIRS))]
         self.benefits_dir = self.benefits_dirs[0]
         self.state_path = Path(state_path or settings.VEILLE_STATE_PATH)
+        # State du mode revival : séparé, pour ne pas écraser la rotation de la
+        # veille normale (`last_run` partagé par slug).
+        self.revival_state_path = Path(
+            revival_state_path or settings.VEILLE_REVIVAL_STATE_PATH)
         self.reports_dir = Path(reports_dir or settings.VEILLE_REPORTS_DIR)
         self.stats_url = stats_url or settings.VEILLE_STATS_URL
         self.matomo_url = matomo_url or settings.VEILLE_MATOMO_URL
@@ -106,7 +115,11 @@ class VeilleAgent:
         self.ignore = link_ignore or load_link_ignore(
             link_ignore_path or settings.VEILLE_LINK_IGNORE_PATH)
         self.max_pr = settings.VEILLE_MAX_PR
+        self.revival_batch = settings.VEILLE_REVIVAL_BATCH
+        self.revival_exclude = settings.VEILLE_REVIVAL_EXCLUDE
         self.prompt = _load_prompt()
+        # Prompt montant-only : en revival, `conditions` n'est pas fiable.
+        self.revival_prompt = _load_prompt("revival")
 
     def _get_pr(self) -> PRService:
         """PRService injecté (tests) ou construit depuis la config."""
@@ -130,7 +143,10 @@ class VeilleAgent:
             return {"error": str(exc)}
 
     async def _run(self, params: dict, emit) -> dict:
-        limit = min(int(params.get("limit") or self.daily_batch), self.daily_batch)
+        revival = bool(params.get("revival"))
+        # Cap distinct : VEILLE_DAILY_BATCH (10) ramènerait un --limit 67 à 10.
+        batch = self.revival_batch if revival else self.daily_batch
+        limit = min(int(params.get("limit") or batch), batch)
         only = params.get("only") or []
         model_name = params.get("model_name")
         links_only = bool(params.get("links_only"))
@@ -139,11 +155,19 @@ class VeilleAgent:
         timestamp = self.timestamp or _now_stamp()
 
         # 1. load_pending
-        all_disp = self._load_dispositifs(self.benefits_dirs)
-        if covoiturage:
-            all_disp = all_disp + self._load_covoiturage(self.covoiturage_path)
+        if revival:
+            all_disp = self._load_dispositifs(self.benefits_dirs, only_private=True)
+            all_disp = [d for d in all_disp
+                        if d["slug"] not in self.revival_exclude]
+            if not params.get("all_private"):
+                all_disp = self._traced_private(all_disp)
+        else:
+            all_disp = self._load_dispositifs(self.benefits_dirs)
+            if covoiturage:
+                all_disp = all_disp + self._load_covoiturage(self.covoiturage_path)
         priority = await _maybe_await(self._fetch_priority())
-        store = StateStore(self.state_path, today=today)
+        store = StateStore(self.revival_state_path if revival else self.state_path,
+                           today=today)
         dispositifs = store.select_pending(
             all_disp, priority, limit=limit,
             recheck_days=self.recheck_days, only=only or None,
@@ -185,7 +209,14 @@ class VeilleAgent:
                     })
             else:
                 llm = self._make_llm(model_name)
+                alive_by_slug = {r["slug"]: _links_alive(r) for r in link_results}
                 for i, disp in enumerate(dispositifs):
+                    if revival and not alive_by_slug.get(disp["slug"]):
+                        # Fiche non réactivable : inutile de payer un appel LLM.
+                        content_results.append({"slug": disp["slug"], "stale": False,
+                                                "confidence": 0.0, "divergences": [],
+                                                "proposed": {}, "skipped": "still_broken"})
+                        continue
                     if disp.get("check_only"):
                         # covoiturage : entrée JSON, pas de fiche à comparer.
                         content_results.append({"slug": disp["slug"], "stale": False,
@@ -203,8 +234,10 @@ class VeilleAgent:
                                                 "confidence": 0.0, "divergences": [],
                                                 "proposed": {}, "skipped": "unreachable"})
                     else:
-                        content_results.append(
-                            await check_content(disp, page_text, llm, self.prompt))
+                        content_results.append(await check_content(
+                            disp, page_text, llm,
+                            self.revival_prompt if revival else self.prompt,
+                            allowed=("montant",) if revival else None))
                     await self._emit(emit, "progress", {
                         "step": "check_content", "slug": disp["slug"],
                         "index": i + 1, "total": total,
@@ -212,14 +245,17 @@ class VeilleAgent:
                     })
 
         # 4. apply_updates_and_pr
-        pr_results = await self._apply_updates(
+        apply = self._apply_revivals if revival else self._apply_updates
+        pr_results = await apply(
             dispositifs, link_results, content_results, today, emit)
 
         # 5. generate_report
         summary = build_summary(link_results, content_results, pr_results)
         report_md = render_markdown(link_results, content_results, pr_results,
-                                    summary, generated_at=today)
-        report_path = write_report(report_md, self.reports_dir, timestamp)
+                                    summary, generated_at=today,
+                                    mode="revival" if revival else "veille")
+        report_path = write_report(report_md, self.reports_dir, timestamp,
+                                   prefix="revival" if revival else "veille")
 
         # 6. persist state
         self._mark_state(store, link_results, content_results, pr_results)
@@ -285,6 +321,83 @@ class VeilleAgent:
                 results.append(res)
             await self._emit(emit, "pr", results[-1])
         return results
+
+    def _traced_private(self, dispositifs) -> list:
+        """Fiches private que la veille a elle-même mises en cause.
+
+        Sur les fiches `private`, seul le state de la veille distingue "private
+        car lien mort" de "private par décision métier" (dispositif terminé,
+        jamais lancé, saisonnier). Sans cette trace, un lien redevenu 200 ne
+        dit rien : réactiver produirait des PR bruyantes. `--all-private`
+        contourne ce filtre en assumant ce bruit.
+        """
+        try:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        benefits = data.get("benefits", {}) or {}
+        traced = {
+            slug for slug, entry in benefits.items()
+            if entry.get("pr_url") or entry.get("link_status") == "broken"
+        }
+        return [d for d in dispositifs if d["slug"] in traced]
+
+    async def _apply_revivals(self, dispositifs, link_results, content_results,
+                              today, emit):
+        """Mode revival : PR de sortie du private quand tous les liens répondent."""
+        by_slug = {d["slug"]: d for d in dispositifs}
+        content_by_slug = {c["slug"]: c for c in content_results}
+        results = []
+        opened = 0
+
+        for lr in link_results:
+            slug = lr["slug"]
+            if not lr["links"]:
+                # Fiche sans lien : rien à retester, aucune preuve de vie.
+                results.append({"slug": slug, "action": "no_link"})
+            elif not _links_alive(lr):
+                results.append({
+                    "slug": slug, "action": "still_broken",
+                    "broken": [l["url"] for l in lr["links"]
+                               if l.get("classe") not in ("ok", "ignored")],
+                })
+            elif self.pr_mode == "off" or by_slug[slug].get("check_only"):
+                results.append({"slug": slug, "action": "revive_no_pr"})
+            elif opened >= self.max_pr:
+                results.append({"slug": slug, "action": "pr_capped"})
+            else:
+                res = await self._open_revive_pr(
+                    by_slug[slug], lr, content_by_slug.get(slug, {}), today)
+                if res.get("action") == "pr_opened":
+                    opened += 1
+                results.append(res)
+            await self._emit(emit, "pr", results[-1])
+        return results
+
+    async def _open_revive_pr(self, disp, link_result, content, today) -> dict:
+        slug = disp["slug"]
+        pr = self._get_pr()
+        file_path, rel = self._file_and_rel(disp)
+        try:
+            if pr.branch_exists(slug):
+                return {"slug": slug, "action": "pr_exists"}
+            diff = unmark_private(file_path)
+            proposed = content.get("proposed") or {}
+            montant_diff = None
+            if ("montant" in proposed
+                    and content.get("confidence", 0.0) >= self.confidence_min):
+                montant_diff = patch_benefit_file(
+                    file_path, {"montant": proposed["montant"]})
+            title = (f"veille: {disp.get('label', slug)} — lien(s) rétabli(s), "
+                     "sortie du mode private")
+            body = _pr_body_revive(disp, link_result, content, diff, montant_diff)
+            url = pr.create(slug, rel, title, body,
+                            draft=(self.pr_mode == "draft"),
+                            today=today.replace("-", ""), prefix="revive")
+            return {"slug": slug, "action": "pr_opened", "kind": "revive",
+                    "pr_url": url}
+        except Exception as exc:
+            return {"slug": slug, "action": "pr_error", "error": str(exc)}
 
     def _file_and_rel(self, disp) -> tuple:
         """Fichier source de la fiche + son chemin relatif au repo aides-jeunes.
@@ -367,6 +480,51 @@ class VeilleAgent:
                               else "no_change")
             store.mark(slug, link_status=link_status, content_status=content_status,
                        pr_url=pr_by_slug.get(slug, {}).get("pr_url"))
+
+
+def _links_alive(link_result) -> bool:
+    """Vrai si tous les liens de la fiche répondent (ok, ou faux positif connu).
+
+    Strict volontairement : un seul lien `broken` ou `suspicious` suffit à ne
+    pas réactiver. Sur un doute, on laisse la fiche en private.
+    """
+    links = link_result.get("links") or []
+    return bool(links) and all(
+        l.get("classe") in ("ok", "ignored") for l in links)
+
+
+def _pr_body_revive(disp, link_result, content, diff, montant_diff) -> str:
+    lines = [f"## Dispositif : {disp.get('label', disp['slug'])}",
+             f"- Institution : {disp.get('institution', '')}", "",
+             "### Lien(s) re-testé(s)", ""]
+    for l in link_result.get("links", []):
+        etat = "ignoré (faux positif connu)" if l.get("classe") == "ignored" else "OK"
+        lines.append(f"- [{l['type']}] {l['url']} → **{l['status']}** ({etat})")
+    lines += ["", "### Action proposée",
+              f"- `private` : `{diff['before'].get('private')}` → retiré"]
+    if montant_diff:
+        lines.append(
+            f"- `montant` (maximum) : `{montant_diff['before'].get('montant')}` → "
+            f"`{montant_diff['after'].get('montant')}`")
+    elif content.get("proposed", {}).get("montant") is not None:
+        lines.append(
+            f"- `montant` : divergence détectée "
+            f"(page ≈ `{content['proposed']['montant']}`) mais confiance "
+            f"{content.get('confidence')} trop faible → **non modifié**, à vérifier")
+    else:
+        lines.append("- `montant` (maximum) : inchangé")
+    for d in content.get("divergences", []):
+        lines.append(f"  - extrait page : > {d.get('extrait_source', '')}")
+    lines += ["",
+              "> Le/les lien(s) de ce dispositif répondent à nouveau : la fiche "
+              "sort du mode `private`. **À vérifier manuellement** : un lien "
+              "vivant ne garantit pas que le dispositif existe encore (page "
+              "d'accueil rétablie, dispositif clos, campagne terminée). Si l'aide "
+              "n'existe plus, fermer cette PR — le dispositif ne sera plus "
+              "reproposé.",
+              "",
+              "> PR générée automatiquement par l'agent Veille (aj-llm) — à valider par un humain."]
+    return "\n".join(lines)
 
 
 def _pr_body_broken(disp, broken, diff) -> str:

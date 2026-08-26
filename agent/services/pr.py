@@ -5,8 +5,11 @@ import re
 import subprocess
 from pathlib import Path
 
-# Nom de branche produit par `create` : veille/update-<slug>-<YYYYMMDD>.
-BRANCH_RE = re.compile(r"^veille/update-(?P<slug>.+)-(?P<date>\d{8})$")
+# Noms de branche produits par `create` : veille/<update|revive>-<slug>-<YYYYMMDD>.
+# Les deux préfixes partagent le même espace de déduplication : une PR de
+# réactivation refusée doit bloquer une nouvelle PR sur le même dispositif,
+# et inversement.
+BRANCH_RE = re.compile(r"^veille/(?:update|revive)-(?P<slug>.+)-(?P<date>\d{8})$")
 
 
 def _looks_invalid_token(value: str) -> bool:
@@ -100,14 +103,16 @@ class PRService:
                        for h in heads)
         # Repli sans gh : présence d'une branche distante (ancien comportement).
         res = self.runner(
-            ["git", "ls-remote", "--heads", self.remote, f"veille/update-{slug}*"],
+            ["git", "ls-remote", "--heads", self.remote, f"veille/*-{slug}-*"],
             cwd=str(self.repo_root), capture_output=True, text=True, check=False,
             env=_clean_env(),
         )
         return bool((res.stdout or "").strip())
 
-    def create(self, slug, file_rel_path, title, body, draft, today) -> str:
-        branch = f"veille/update-{slug}-{today}"
+    def create(self, slug, file_rel_path, title, body, draft, today,
+               prefix: str = "update") -> str:
+        """Ouvre la PR. `prefix` = 'update' (veille) ou 'revive' (réactivation)."""
+        branch = f"veille/{prefix}-{slug}-{today}"
         # Base = repo cible, pas le fork : sinon la PR part d'un main obsolète.
         self._run(["git", "fetch", self.base_remote, "main"])
         self._run(["git", "checkout", "-b", branch, f"{self.base_remote}/main"])

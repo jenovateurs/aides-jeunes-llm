@@ -43,3 +43,22 @@ def mark_private(path: Path) -> dict:
     with open(path, "w", encoding="utf-8") as fh:
         yaml.dump(data, fh)
     return {"before": before, "after": {"private": True}}
+
+
+def unmark_private(path: Path) -> dict:
+    """Retire `private` de la fiche (lien revenu à la vie), format préservé.
+
+    Les fiches publiques n'ont pas de champ `private` du tout : on supprime la
+    clé plutôt que de poser `private: false`.
+
+    Retourne {"before": {"private": ...}, "after": {"private": None}}.
+    """
+    path = Path(path)
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    data = yaml.load(path.read_text(encoding="utf-8"))
+    before = {"private": data.get("private")}
+    data.pop("private", None)
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.dump(data, fh)
+    return {"before": before, "after": {"private": None}}

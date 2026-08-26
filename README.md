@@ -210,6 +210,109 @@ Un faux positif se corrige en ajoutant le domaine à `veille-link-ignore.yml` pl
 
 > Les PR nécessitent `gh` authentifié et un remote poussable. Sans ça, rester en `VEILLE_PR_MODE=off`.
 
+### Mode revival — réactiver les fiches `private`
+
+Sens inverse de la veille : parcourt les fiches `private: true`, reteste leurs
+liens, et pour celles dont **tous** les liens répondent ouvre une PR qui retire
+`private` (et met à jour le **montant maximum** si la page en annonce un autre).
+
+#### Par où commencer
+
+**Étape 1 — repérage, aucune écriture.** State envoyé dans `/tmp` pour ne pas
+consommer la rotation (sinon les fiches vues sont ignorées pendant
+`VEILLE_RECHECK_DAYS`) :
+
+```bash
+cd tools/aj-llm
+VEILLE_PR_MODE=off \
+VEILLE_REVIVAL_STATE_PATH=/tmp/revival-dryrun.json \
+VEILLE_REVIVAL_BATCH=70 \
+  uv run python -m agent.revival_cli --all-private --links-only --limit 70
+```
+
+Aucune PR, aucun appel LLM, aucun `.yml` touché, aucune commande `git`. Lire
+ensuite `reports/revival-<timestamp>.md` : les fiches listées `revive_no_pr`
+sont celles dont tous les liens répondent.
+
+**Étape 2 — PR brouillon.** Avant de lancer : le repo `aides-jeunes` doit avoir
+un arbre de travail propre (`git status`), sinon les fichiers non commités
+suivent la branche créée. Les branches partent de `origin/main`, la branche
+courante n'a pas d'importance.
+
+```bash
+VEILLE_PR_MODE=draft \
+VEILLE_GIT_REMOTE=aides-jeunes-bot \
+VEILLE_PR_REPO=betagouv/aides-jeunes \
+VEILLE_PR_HEAD=aides-jeunes-bot \
+VEILLE_MAX_PR=5 \
+  uv run python -m agent.revival_cli --all-private --limit 70
+```
+
+`VEILLE_MAX_PR=5` limite le premier vrai run à 5 PR, le temps de juger la
+qualité des propositions. Sans `--links-only`, le montant maximum est vérifié
+par LLM (1 appel par fiche réactivable).
+
+```bash
+uv run python -m agent.revival_cli \
+  [--limit N] [--only SLUG ...] [--model-name NAME] [--all-private] [--links-only]
+```
+
+| Option | Défaut | Effet |
+|---|---|---|
+| `--limit N` | `10` | Nombre de fiches traitées. Plafonné par `VEILLE_REVIVAL_BATCH` (`30`), **pas** par `VEILLE_DAILY_BATCH`. |
+| `--only SLUG ...` | _(vide)_ | Restreint le run à ces slugs. |
+| `--model-name NAME` | _(config)_ | Force le modèle LLM. |
+| `--all-private` | `false` | Teste **toutes** les fiches `private` (67) au lieu des seules que la veille a elle-même passées en private. Voir l'avertissement ci-dessous. |
+| `--links-only` | `false` | Liens seuls : aucun contrôle du montant, aucun appel LLM. |
+
+**Périmètre.** Par défaut, seules les fiches que la veille a elle-même mises en
+cause sont retestées — celles dont `.veille/state.json` porte un `pr_url` ou un
+`link_status: broken` (≈ 20 fiches). C'est la seule trace machine distinguant
+« private car lien mort » de « private par décision métier » (dispositif
+terminé, jamais lancé, saisonnier). `--all-private` élargit aux 67 en assumant
+ce bruit : **un lien vivant ne garantit pas un dispositif vivant** (page
+d'accueil rétablie, campagne closée). Chaque PR porte cet avertissement.
+
+**Règle de réactivation.** Tous les liens de la fiche (`link`, `instructions`,
+`form`, `teleservice`) doivent être `ok` ou `ignored`. Un seul `broken` ou
+`suspicious` suffit à laisser la fiche en private (`still_broken` au rapport) —
+et fait sauter l'appel LLM pour cette fiche.
+
+**Montant.** Seul `montant` est vérifié, via `agent/prompts/revival.yaml`
+(`conditions` est hors périmètre, trop peu fiable). La valeur n'est patchée que
+si la confiance LLM atteint `VEILLE_CONFIDENCE_MIN` ; sinon la divergence est
+seulement signalée dans le corps de la PR.
+
+**Garde-fous.** Branches `veille/revive-<slug>-<date>`, dédupliquées avec les
+branches `veille/update-*` : une PR de réactivation fermée sans merge (« cette
+aide n'existe plus ») bloque définitivement toute nouvelle proposition sur ce
+dispositif. State séparé (`.veille/revival-state.json`) pour ne pas perturber la
+rotation de la veille. Rapport dans `reports/revival-<timestamp>.md`.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `VEILLE_REVIVAL_BATCH` | `30` | Plafond du `--limit` en mode revival |
+| `VEILLE_REVIVAL_STATE_PATH` | `.veille/revival-state.json` | State du mode revival |
+| `VEILLE_REVIVAL_EXCLUDE` | `benefit_front_test` | Slugs à ne jamais réactiver (fixtures de test du front) |
+
+#### Exemples
+
+```bash
+# 1. Repérage sans rien pousser, sans appel LLM
+VEILLE_PR_MODE=off uv run python -m agent.revival_cli --links-only --limit 20
+
+# 2. Tout le stock private, rapport seul
+VEILLE_PR_MODE=off VEILLE_REVIVAL_BATCH=70 \
+  uv run python -m agent.revival_cli --all-private --links-only --limit 70
+
+# 3. Réactivation en PR brouillon, périmètre tracé, montant vérifié
+VEILLE_PR_MODE=draft \
+  VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=betagouv/aides-jeunes \
+  VEILLE_PR_HEAD=aides-jeunes-bot \
+  uv run python -m agent.revival_cli --limit 20
+```
+
+
 ### Via l'API (SSE)
 
 ```bash
