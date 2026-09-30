@@ -62,3 +62,17 @@ def unmark_private(path: Path) -> dict:
     with open(path, "w", encoding="utf-8") as fh:
         yaml.dump(data, fh)
     return {"before": before, "after": {"private": None}}
+
+
+def add_header_comment(path: Path, text: str) -> None:
+    """Pose `# <text>` en tête de fiche (veille snapshots), format préservé.
+
+    Édition texte et non dump ruamel : le reste du fichier reste octet pour
+    octet identique, la PR ne montre que cette ligne. Les lignes
+    `# veille-snapshot` de tête déjà présentes sont remplacées, pas empilées.
+    """
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    while lines and lines[0].startswith("# veille-snapshot"):
+        lines.pop(0)
+    path.write_text(f"# {text}\n" + "".join(lines), encoding="utf-8")

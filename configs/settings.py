@@ -93,6 +93,16 @@ class Settings:
     VEILLE_PR_HEAD = os.getenv("VEILLE_PR_HEAD", "")        # ex: aides-jeunes-bot
     VEILLE_MAX_PR = int(os.getenv("VEILLE_MAX_PR", "20"))   # cap dur de PR par run
 
+    # ── Veille snapshots : diff de la page `link` entre deux runs ──────
+    SNAPSHOT_DIR = Path(os.getenv(
+        "SNAPSHOT_DIR", str(BASE_DIR / ".veille" / "snapshots")
+    ))
+    SNAPSHOT_KEEP = int(os.getenv("SNAPSHOT_KEEP", "8"))
+    # Limite GitHub d'un commentaire : 65 536 caractères.
+    SNAPSHOT_DIFF_MAX_CHARS = int(os.getenv("SNAPSHOT_DIFF_MAX_CHARS", "60000"))
+    SNAPSHOT_MIN_CHARS = int(os.getenv("SNAPSHOT_MIN_CHARS", "300"))
+    SNAPSHOT_MAX_CHURN = float(os.getenv("SNAPSHOT_MAX_CHURN", "0.5"))
+
     # ── Mode revival : fiches `private` dont les liens revivent ────────
     # State séparé : écrire dans VEILLE_STATE_PATH écraserait le `last_run` des
     # slugs et perturberait la rotation de la veille normale.

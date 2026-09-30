@@ -22,6 +22,7 @@ dependencies = [
     "thefuzz>=0.22.1",
     "httpx[http2]>=0.28.1",
     "uvicorn>=0.45.0",
+    "trafilatura==2.2.0",
 ]
 
 [dependency-groups]

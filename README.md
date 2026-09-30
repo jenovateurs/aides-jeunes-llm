@@ -333,6 +333,36 @@ uv run pytest tests/ -v
 
 ---
 
+## Veille snapshots (CLI, sans LLM)
+
+Garde localement le contenu utile de la page `link` de chaque fiche publique et
+le compare au run précédent. Si des **dates**, des **montants** ou une
+**clôture** changent, ouvre une PR (ou commente la PR déjà ouverte) avec le
+diff. Détection par regex, aucun appel LLM. Lancement **manuel** uniquement.
+Design : `docs/superpowers/specs/2026-09-23-snapshot-veille-design.md`.
+
+```bash
+cd tools/aj-llm
+# 1. Premier lancement : enregistre les snapshots de référence
+uv run python -m agent.snapshot_cli --baseline
+# 2. Runs suivants (un autre jour) : rapport seul, rien d'écrit ni envoyé
+uv run python -m agent.snapshot_cli --dry-run
+# 3. Pour de vrai, PR brouillon (mêmes variables git/PR que la veille)
+VEILLE_PR_MODE=draft uv run python -m agent.snapshot_cli [--only SLUG ...]
+```
+
+- La comparaison se fait contre le snapshot d'un **jour antérieur** : deux
+  runs le même jour comparent à la même référence.
+- Ne sont jamais envoyées : les pages piège (captcha, 404 servie en 200), les
+  redirections vers un autre domaine ou l'accueil, les textes trop courts, les
+  refontes (> 50 % de lignes changées), les tailles anormales et les pages
+  instables (re-fetch différent). Elles sont listées **suspectes** au rapport.
+  Pour accepter une refonte : `--baseline --only <slug>`.
+- `private: true` uniquement sur une tournure de clôture explicite sans date à
+  venir ; sinon la PR ajoute un commentaire `# veille-snapshot` en tête de fiche.
+- Stockage : `.veille/snapshots/<slug>/` (`SNAPSHOT_DIR`, 8 snapshots par fiche
+  via `SNAPSHOT_KEEP`). Rapport : `reports/snapshot-<timestamp>.md`.
+
 ## Roadmap déploiement
 
 - **Itération 1 (actuelle)** : outil local lancé à la main (ce README).

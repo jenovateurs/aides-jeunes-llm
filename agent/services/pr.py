@@ -5,11 +5,13 @@ import re
 import subprocess
 from pathlib import Path
 
-# Noms de branche produits par `create` : veille/<update|revive>-<slug>-<YYYYMMDD>.
-# Les deux préfixes partagent le même espace de déduplication : une PR de
+# Noms de branche produits par `create` :
+# veille/<update|revive|snapshot>-<slug>-<YYYYMMDD>.
+# Les préfixes partagent le même espace de déduplication : une PR de
 # réactivation refusée doit bloquer une nouvelle PR sur le même dispositif,
 # et inversement.
-BRANCH_RE = re.compile(r"^veille/(?:update|revive)-(?P<slug>.+)-(?P<date>\d{8})$")
+BRANCH_RE = re.compile(
+    r"^veille/(?:update|revive|snapshot)-(?P<slug>.+)-(?P<date>\d{8})$")
 
 
 def _looks_invalid_token(value: str) -> bool:
@@ -55,29 +57,28 @@ class PRService:
         self.base_remote = base_remote or remote
         self.base_repo = base_repo
         self.head_owner = head_owner
-        self._blocking_heads = None  # cache par instance
+        self._prs = None  # cache par instance
 
-    def _run(self, cmd: list[str]) -> str:
+    def _run(self, cmd: list[str], input: str | None = None) -> str:
+        kwargs = {"input": input} if input is not None else {}
         res = self.runner(
             cmd, cwd=str(self.repo_root), capture_output=True, text=True,
-            check=False, env=_clean_env(),
+            check=False, env=_clean_env(), **kwargs,
         )
         if res.returncode != 0:
             raise RuntimeError(f"Commande échouée: {' '.join(cmd)}\n{res.stderr}")
         return (res.stdout or "").strip()
 
-    def _blocking_pr_heads(self):
-        """Branches des PR qui interdisent une nouvelle PR pour un dispositif.
+    def list_prs(self) -> list[dict] | None:
+        """PR `veille/*` du repo cible : [{headRefName, state, url}].
 
-        Bloquantes : PR **ouvertes** (doublon) et PR **fermées sans merge**
-        (refus humain, à ne pas rejouer). Les PR mergées ne bloquent pas : la
-        branche survit sur le fork après merge, s'y fier gelait le dispositif
-        pour toujours. `None` si `gh` est indisponible → repli sur git.
+        `None` si `gh` est indisponible ou sa sortie illisible. Mis en cache :
+        un run interroge GitHub une seule fois.
         """
-        if self._blocking_heads is not None:
-            return self._blocking_heads
+        if self._prs is not None:
+            return self._prs
         cmd = ["gh", "pr", "list", "--state", "all", "--limit", "500",
-               "--json", "headRefName,state"]
+               "--json", "headRefName,state,url"]
         if self.base_repo:
             cmd += ["--repo", self.base_repo]
         res = self.runner(cmd, cwd=str(self.repo_root), capture_output=True,
@@ -88,11 +89,44 @@ class PRService:
             prs = json.loads(res.stdout or "[]")
         except ValueError:
             return None
-        self._blocking_heads = {
-            pr["headRefName"] for pr in prs
-            if str(pr.get("state", "")).upper() != "MERGED"
-        }
-        return self._blocking_heads
+        self._prs = [pr for pr in prs if isinstance(pr, dict)]
+        return self._prs
+
+    def _prs_for(self, slug: str) -> list[dict]:
+        # slug exact : un préfixe matcherait 'a' sur une PR de 'a-bis'.
+        return [pr for pr in self.list_prs() or []
+                if (m := BRANCH_RE.match(pr.get("headRefName", "")))
+                and m.group("slug") == slug]
+
+    def _blocking_pr_heads(self):
+        """Branches des PR qui interdisent une nouvelle PR pour un dispositif.
+
+        Bloquantes : PR **ouvertes** (doublon) et PR **fermées sans merge**
+        (refus humain, à ne pas rejouer). Les PR mergées ne bloquent pas : la
+        branche survit sur le fork après merge, s'y fier gelait le dispositif
+        pour toujours. `None` si `gh` est indisponible → repli sur git.
+        """
+        prs = self.list_prs()
+        if prs is None:
+            return None
+        return {pr["headRefName"] for pr in prs
+                if str(pr.get("state", "")).upper() != "MERGED"}
+
+    def find_open_pr(self, slug: str) -> str | None:
+        """URL de la PR ouverte du dispositif (tous préfixes), sinon None."""
+        for pr in self._prs_for(slug):
+            if str(pr.get("state", "")).upper() == "OPEN":
+                return pr.get("url")
+        return None
+
+    def is_refused(self, slug: str) -> bool:
+        """Vrai si une PR du dispositif a été fermée sans merge."""
+        return any(str(pr.get("state", "")).upper() == "CLOSED"
+                   for pr in self._prs_for(slug))
+
+    def comment(self, pr: str, body: str) -> None:
+        """Commente la PR (URL ou numéro). Body sur stdin : pas de limite argv."""
+        self._run(["gh", "pr", "comment", pr, "--body-file", "-"], input=body)
 
     def branch_exists(self, slug: str) -> bool:
         """Vrai si une PR ouverte ou refusée existe déjà pour ce dispositif."""
@@ -111,7 +145,8 @@ class PRService:
 
     def create(self, slug, file_rel_path, title, body, draft, today,
                prefix: str = "update") -> str:
-        """Ouvre la PR. `prefix` = 'update' (veille) ou 'revive' (réactivation)."""
+        """Ouvre la PR. `prefix` = 'update' (veille), 'revive' (réactivation)
+        ou 'snapshot' (veille snapshots)."""
         branch = f"veille/{prefix}-{slug}-{today}"
         # Base = repo cible, pas le fork : sinon la PR part d'un main obsolète.
         self._run(["git", "fetch", self.base_remote, "main"])

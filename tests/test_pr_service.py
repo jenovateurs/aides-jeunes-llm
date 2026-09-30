@@ -173,3 +173,63 @@ def test_revive_pr_blocks_a_new_pr_for_the_same_slug():
     runner = _PRListRunner([
         {"headRefName": "veille/revive-a-20260826", "state": "CLOSED"}])
     assert _pr(runner, base_repo="betagouv/aides-jeunes").branch_exists("a") is True
+
+
+# ── Veille snapshots : préfixe `snapshot`, PR ouverte, commentaire ──────
+
+
+def test_snapshot_prefix_shares_dedup_space():
+    runner = _PRListRunner([
+        {"headRefName": "veille/snapshot-a-20260930", "state": "CLOSED"}])
+    assert _pr(runner, base_repo="betagouv/aides-jeunes").branch_exists("a") is True
+
+
+def test_find_open_pr_returns_url_any_prefix():
+    runner = _PRListRunner([
+        {"headRefName": "veille/update-a-20260801", "state": "MERGED",
+         "url": "https://gh/pr/1"},
+        {"headRefName": "veille/update-a-bis-20260901", "state": "OPEN",
+         "url": "https://gh/pr/2"},
+        {"headRefName": "veille/revive-a-20260901", "state": "OPEN",
+         "url": "https://gh/pr/3"},
+    ])
+    pr = _pr(runner, base_repo="betagouv/aides-jeunes")
+    assert pr.find_open_pr("a") == "https://gh/pr/3"
+    assert pr.find_open_pr("b") is None
+    list_cmd = runner.cmd("gh", "pr", "list")
+    assert "headRefName,state,url" in list_cmd
+
+
+def test_is_refused_only_for_closed_unmerged():
+    runner = _PRListRunner([
+        {"headRefName": "veille/snapshot-a-20260901", "state": "CLOSED", "url": "u1"},
+        {"headRefName": "veille/snapshot-b-20260901", "state": "MERGED", "url": "u2"},
+        {"headRefName": "veille/snapshot-c-20260901", "state": "OPEN", "url": "u3"},
+    ])
+    pr = _pr(runner, base_repo="betagouv/aides-jeunes")
+    assert pr.is_refused("a") is True
+    assert pr.is_refused("b") is False
+    assert pr.is_refused("c") is False
+
+
+def test_pr_state_unknown_when_gh_unavailable():
+    class _NoGh(_Runner):
+        def __call__(self, cmd, **kwargs):
+            self.calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="gh absent")
+    pr = _pr(_NoGh())
+    assert pr.list_prs() is None
+
+
+def test_comment_sends_body_on_stdin():
+    seen = {}
+
+    class _Capture(_Runner):
+        def __call__(self, cmd, **kwargs):
+            seen.update(kwargs)
+            return super().__call__(cmd, **kwargs)
+    runner = _Capture()
+    _pr(runner).comment("https://gh/pr/3", "corps `diff`")
+    assert runner.cmd("gh", "pr", "comment") == [
+        "gh", "pr", "comment", "https://gh/pr/3", "--body-file", "-"]
+    assert seen["input"] == "corps `diff`"
