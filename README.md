@@ -12,11 +12,11 @@ Outils LLM pour alimenter et maintenir la base Aides Jeunes. **Ce projet vit dan
 
 ## Emplacement
 
-Ce dépôt doit être **cloné dans le dossier `tools/` du repo [`aides-jeunes`](https://github.com/betagouv/aides-jeunes)**, sous le nom `aj-llm` :
+Ce dépôt doit être **cloné dans le dossier `tools/` du repo [`aides-jeunes`](https://github.com/DNUM-SocialGouv/aides-jeunes)**, sous le nom `aj-llm` :
 
 ```bash
 # 1. Cloner le repo principal (si pas déjà fait)
-git clone git@github.com:betagouv/aides-jeunes.git
+git clone git@github.com:DNUM-SocialGouv/aides-jeunes.git
 # 2. Cloner cet outil dans tools/aj-llm
 cd aides-jeunes/tools
 git clone git@github.com:jenovateurs/aides-jeunes-llm.git aj-llm
@@ -163,7 +163,7 @@ uv run python -m agent.veille_cli --only aide-au-bafa-caf-haute-savoie
 
 # 3. Chasse aux liens cassés sur tout le stock, PR brouillon (cap 20 PR)
 VEILLE_PR_MODE=draft VEILLE_DAILY_BATCH=150 \
-VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=betagouv/aides-jeunes VEILLE_PR_HEAD=aides-jeunes-bot \
+VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=DNUM-SocialGouv/aides-jeunes VEILLE_PR_HEAD=aides-jeunes-bot \
 uv run python -m agent.veille_cli --limit 150 --links-only
 
 # 4. Liens openfisca uniquement (aides nationales, service-public.fr)
@@ -197,7 +197,7 @@ Un faux positif se corrige en ajoutant le domaine à `veille-link-ignore.yml` pl
 | `VEILLE_GIT_REMOTE` | `origin` | Remote (fork) où pousser la branche |
 | `VEILLE_PR_BASE_REMOTE` | `origin` | Remote dont **part** la branche. Doit viser le repo cible : brancher depuis un fork en retard produit des PR qui annulent des correctifs déjà mergés. |
 | `VEILLE_BENEFITS_DIRS` | `javascript,openfisca` | Dossiers de `data/benefits/` scannés |
-| `VEILLE_PR_REPO` | _(vide)_ | Repo cible de la PR, ex. `betagouv/aides-jeunes` |
+| `VEILLE_PR_REPO` | _(vide)_ | Repo cible de la PR, ex. `DNUM-SocialGouv/aides-jeunes` |
 | `VEILLE_PR_HEAD` | _(vide)_ | Owner de la branche head (PR cross-fork via `gh`) |
 | `VEILLE_STATE_PATH` | `.veille/state.json` | Fichier d'état |
 | `VEILLE_REPORTS_DIR` | `reports/` | Dossier des rapports |
@@ -242,7 +242,7 @@ courante n'a pas d'importance.
 ```bash
 VEILLE_PR_MODE=draft \
 VEILLE_GIT_REMOTE=aides-jeunes-bot \
-VEILLE_PR_REPO=betagouv/aides-jeunes \
+VEILLE_PR_REPO=DNUM-SocialGouv/aides-jeunes \
 VEILLE_PR_HEAD=aides-jeunes-bot \
 VEILLE_MAX_PR=5 \
   uv run python -m agent.revival_cli --all-private --limit 70
@@ -307,7 +307,7 @@ VEILLE_PR_MODE=off VEILLE_REVIVAL_BATCH=70 \
 
 # 3. Réactivation en PR brouillon, périmètre tracé, montant vérifié
 VEILLE_PR_MODE=draft \
-  VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=betagouv/aides-jeunes \
+  VEILLE_GIT_REMOTE=aides-jeunes-bot VEILLE_PR_REPO=DNUM-SocialGouv/aides-jeunes \
   VEILLE_PR_HEAD=aides-jeunes-bot \
   uv run python -m agent.revival_cli --limit 20
 ```

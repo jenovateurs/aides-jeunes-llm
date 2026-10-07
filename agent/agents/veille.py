@@ -465,7 +465,11 @@ class VeilleAgent:
         content_by_slug = {c["slug"]: c for c in content_results}
         for lr in link_results:
             slug = lr["slug"]
-            classes = {l.get("classe", "ok") for l in lr["links"]}
+            # Plafond de PR atteint : la fiche reste à traiter au prochain run
+            # au lieu d'être ignorée VEILLE_RECHECK_DAYS jours.
+            if pr_by_slug.get(slug, {}).get("action") == "pr_capped":
+                continue
+            classes ={l.get("classe", "ok") for l in lr["links"]}
             if "broken" in classes:
                 link_status = "broken"
             elif "suspicious" in classes:

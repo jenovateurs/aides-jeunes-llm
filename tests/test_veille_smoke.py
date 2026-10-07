@@ -402,6 +402,18 @@ def test_max_pr_cap_stops(tmp_path):
     assert any(p["action"] == "pr_capped" for p in state["pr_results"])
 
 
+def test_capped_fiche_stays_pending_for_next_run(tmp_path):
+    # plafond atteint : la fiche n'a pas eu sa PR, elle ne doit pas être
+    # considérée « vue » (sinon ignorée VEILLE_RECHECK_DAYS jours)
+    pr = _FakePR()
+    agent = _agent_broken(tmp_path, "draft", pr, LinkIgnore(domains=["ter.sncf.com"]))
+    agent.max_pr = 0
+    asyncio.run(agent.run({"limit": 10, "only": [], "model_name": None}))
+    benefits = json.loads((tmp_path / "state.json").read_text())["benefits"]
+    assert "a" not in benefits
+    assert "b" in benefits
+
+
 def test_suspicious_403_no_pr_no_ignore(tmp_path):
     # 403 sans ignore → suspicious, pas de PR
     pr = _FakePR()
